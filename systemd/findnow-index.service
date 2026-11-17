@@ -1,0 +1,8 @@
+[Unit]
+Description=FindNow file index (plocate)
+
+[Service]
+Type=oneshot
+Nice=15
+IOSchedulingClass=idle
+ExecStart=%h/.local/share/findnow/index.sh

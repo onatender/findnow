@@ -1,0 +1,11 @@
+#!/bin/sh
+# Toggle FindNow. If it is already running in the background, show it instantly over D-Bus;
+# otherwise start it.
+if [ -n "$XDG_ACTIVATION_TOKEN" ]; then
+  DATA="{'activation-token': <'$XDG_ACTIVATION_TOKEN'>, 'desktop-startup-id': <'$XDG_ACTIVATION_TOKEN'>}"
+else
+  DATA="{}"
+fi
+gdbus call --session --dest io.github.findnow.FindNow --object-path /io/github/findnow/FindNow \
+  --method org.freedesktop.Application.Activate "$DATA" >/dev/null 2>&1 \
+  || exec python3 "$HOME/.local/share/findnow/findnow.py"
