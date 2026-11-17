@@ -114,7 +114,12 @@ button.tile.empty {
   color: rgba(232,238,244,0.55);
 }
 button.tile.empty:hover { color: #1fd1a0; border-color: #1fd1a0; background: rgba(31,209,160,0.08); }
-button.tile.drop-target { border: 2px solid #1fd1a0; background: rgba(31,209,160,0.25); }
+/* drop highlight must not change the border width: tiles are homogeneous, so a
+   1px change would resize the whole grid (and window) while dragging */
+button.tile.drop-target {
+  border-color: #1fd1a0; background: rgba(31,209,160,0.25);
+  box-shadow: inset 0 0 0 1px #1fd1a0, 0 0 0 1px rgba(31,209,160,0.35);
+}
 button.tile.dragging { opacity: 0.35; }
 
 .tile-name { font-weight: 700; font-size: 13px; text-shadow: 0 1px 3px rgba(0,0,0,0.85); }
