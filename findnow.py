@@ -11,7 +11,6 @@ Usage:
   - Click an empty tile      → add a folder, file, app or command
   - Right-click a tile       → rename, change target, move, remove
   - Drag a tile onto another → swap them (drop on an empty tile to move it there)
-  - Drag files onto a tile   → pin the window (📌) first, then drop from your file manager
   - Esc                      → clear search / close
   - ⚙ Settings               → rows & columns, hotkey, opacity
 """
@@ -506,11 +505,6 @@ class FindNow(Gtk.Application):
         self.search.connect("activate", lambda *_: self._open_result(in_folder=False))
         top.append(self.search)
 
-        self.pin = self._toolbar_button("view-pin-symbolic",
-                                        "Pin: keep open when focus is lost\n"
-                                        "(for dragging files in from your file manager)",
-                                        Gtk.ToggleButton)
-        top.append(self.pin)
 
         settings_btn = self._toolbar_button("emblem-system-symbolic",
                                             "Settings: rows & columns, hotkey, opacity")
@@ -1179,7 +1173,6 @@ class FindNow(Gtk.Application):
 
     def _hide(self):
         self.popover.popdown()
-        self.pin.set_active(False)
         self.window.set_visible(False)
 
     def _on_key(self, _c, keyval, _code, state):
@@ -1235,7 +1228,7 @@ class FindNow(Gtk.Application):
     def _can_auto_hide(self):
         w = self.window
         return (not w.is_active() and w.get_visible() and self.busy == 0
-                and not self.dragging and not self.pin.get_active())
+                and not self.dragging)
 
     def _on_focus_change(self, _w, _p):
         if self._can_auto_hide():

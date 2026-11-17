@@ -2,7 +2,7 @@
 
 **Instant file search and a deck of shortcuts, one hotkey away — for Linux.**
 
-Press <kbd>Ctrl</kbd>+<kbd>Space</kbd> and FindNow is already on screen: start typing to find any file on your disks in milliseconds, or hit <kbd>1</kbd>–<kbd>8</kbd> to jump straight to the folders, files and apps you use every day. Pick a result and FindNow gets out of your way.
+Press <kbd>Ctrl</kbd>+<kbd>Space</kbd> and FindNow is already on screen: start typing to find any file on your disks in milliseconds, or hit <kbd>1</kbd>–<kbd>9</kbd> to jump straight to the folders, files and apps you use every day. Pick a result and FindNow gets out of your way.
 
 If you are coming from Windows and miss **Listary** or **Everything**, or from macOS and miss **Alfred** or **Spotlight**, FindNow is built for you.
 
@@ -16,7 +16,7 @@ If you are coming from Windows and miss **Listary** or **Everything**, or from m
 - **Smart ranking.** Exact name matches come first, then names that start with your query, then word-boundary matches. Files in Desktop, Documents and Downloads are boosted, and hidden files are pushed down.
 - **Your favourites, one key away.** A grid of tiles (2 × 4 by default, up to 6 × 8) for the folders, files, apps or shell commands you open all the time.
 - **Any hotkey.** Pick <kbd>Ctrl</kbd>+<kbd>Space</kbd>, <kbd>Super</kbd>+<kbd>Space</kbd> or <kbd>Alt</kbd>+<kbd>Space</kbd>, or record your own combination in Settings. No extra permissions needed: it's a regular GNOME shortcut.
-- **Edit everything in place.** Click an empty tile to add something. Right-click a tile to rename, retarget, move or remove it. Drag tiles to reorder them, and drag files and folders straight onto a tile. You never have to touch a config file.
+- **Edit everything in place.** Click an empty tile to add something. Right-click a tile to rename, retarget, move or remove it. Drag tiles to reorder them. You never have to touch a config file.
 - **Dual-boot friendly.** Mounted drives under `/mnt` and `/media` are indexed too, and Windows system folders, `AppData` and the Recycle Bin are skipped automatically.
 - **Looks good.** Translucent dark glass with a teal accent. You can adjust the opacity in Settings.
 - **Small and hackable.** One Python file built on GTK4. No Electron and no daemons beyond a systemd user service.
@@ -58,7 +58,6 @@ To update, `git pull` and run `./install.sh` again. To remove FindNow, run `./un
 | Click an empty tile | Add a **folder**, **file**, **app** or **command** |
 | Right-click a tile | Rename · change target · move left/right · remove |
 | Drag a tile onto another | Swap them. Drop it on an empty tile to move it there |
-| Drag files in | Pin the window with 📌, then drop files from your file manager onto a tile |
 | ⚙ | Settings: rows & columns, hotkey, background opacity, rebuild index |
 | <kbd>Esc</kbd> | Clear the search, or close |
 
