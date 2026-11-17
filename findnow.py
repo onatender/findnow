@@ -10,6 +10,7 @@ Usage:
   - 1–8 (empty search)       → open that tile
   - Click an empty tile      → add a folder, file, app or command
   - Right-click a tile       → rename, change target, move, remove
+  - Drag a tile onto another → swap them (drop on an empty tile to move it there)
   - Drag files onto a tile   → pin the window (📌) first, then drop from your file manager
   - Esc                      → clear search / close
 """
@@ -25,7 +26,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 try:
     gi.require_version("GioUnix", "2.0")
@@ -44,6 +45,7 @@ TILE_COUNT = 8
 COLUMNS = 4
 RAW_RESULTS = 4000   # candidates fetched from plocate before ranking
 SHOWN_RESULTS = 60   # results listed in the UI
+TILE_DRAG_PREFIX = "findnow-tile:"
 
 DEFAULT_SETTINGS = {"opacity": 0.55}
 
@@ -95,6 +97,7 @@ button.tile.empty {
 }
 button.tile.empty:hover { color: #1fd1a0; border-color: #1fd1a0; background: rgba(31,209,160,0.08); }
 button.tile.drop-target { border: 2px solid #1fd1a0; background: rgba(31,209,160,0.25); }
+button.tile.dragging { opacity: 0.35; }
 
 .tile-name { font-weight: 700; font-size: 13px; text-shadow: 0 1px 3px rgba(0,0,0,0.85); }
 .badge {
@@ -475,7 +478,7 @@ class FindNow(Gtk.Application):
 
     def _hint_tiles(self):
         self.hint.set_label("type: search  ·  1–8 open  ·  empty tile: add  ·  "
-                            "right-click: edit  ·  drag & drop  ·  Esc close")
+                            "right-click: edit  ·  drag to reorder  ·  Esc close")
 
     def _hint_results(self, count):
         more = "+" if count >= SHOWN_RESULTS else ""
@@ -650,8 +653,30 @@ class FindNow(Gtk.Application):
                                                    else self._add_menu(i, b)))
         b.add_controller(right_click)
 
-        drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
-        drop.connect("enter", lambda *_: (b.add_css_class("drop-target"), Gdk.DragAction.COPY)[1])
+        # drag a tile onto another one to swap them (empty tiles are drop-only)
+        if item is not None:
+            drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+            drag.connect("prepare", lambda *_: Gdk.ContentProvider.new_for_value(
+                f"{TILE_DRAG_PREFIX}{i}"))
+
+            def drag_begin(source, _drag):
+                source.set_icon(Gtk.WidgetPaintable.new(b), 20, 20)
+                b.add_css_class("dragging")
+            drag.connect("drag-begin", drag_begin)
+            drag.connect("drag-end", lambda *_: b.remove_css_class("dragging"))
+            b.add_controller(drag)
+
+        # accepts tiles (to reorder) and files/folders from a file manager (to add)
+        drop = Gtk.DropTarget.new(GObject.TYPE_NONE, Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        drop.set_gtypes([Gdk.FileList, GObject.TYPE_STRING])
+
+        def drop_enter(target, _x, _y):
+            b.add_css_class("drop-target")
+            # a drag from inside FindNow is a tile move; anything else is a file copy
+            current = target.get_current_drop()
+            return (Gdk.DragAction.MOVE if current and current.get_drag()
+                    else Gdk.DragAction.COPY)
+        drop.connect("enter", drop_enter)
         drop.connect("leave", lambda *_: b.remove_css_class("drop-target"))
         drop.connect("drop", lambda _t, value, _x, _y: self._on_drop(i, value))
         b.add_controller(drop)
@@ -729,6 +754,17 @@ class FindNow(Gtk.Application):
             print(f"Could not save: {e}", file=sys.stderr)
 
     def _on_drop(self, i, value):
+        if isinstance(value, str):
+            if not value.startswith(TILE_DRAG_PREFIX):
+                return False
+            try:
+                source = int(value[len(TILE_DRAG_PREFIX):])
+            except ValueError:
+                return False
+            if source != i and 0 <= source < TILE_COUNT:
+                # defer the rebuild: the dragged tile is still mid-drag right now
+                GLib.idle_add(lambda: (self._move(source, i), False)[1])
+            return True
         files = [f for f in (value.get_files() if hasattr(value, "get_files") else [])
                  if f.get_path()]
         if not files:

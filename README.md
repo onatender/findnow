@@ -15,7 +15,7 @@ If you are coming from Windows and miss **Listary** or **Everything**, or from m
 - **Search that keeps up with your typing.** Results update on every keystroke from a [plocate](https://plocate.sesse.net/) index. Queries take single-digit milliseconds, even across hundreds of thousands of files.
 - **Smart ranking.** Exact name matches come first, then names that start with your query, then word-boundary matches. Files in Desktop, Documents and Downloads are boosted, and hidden files are pushed down.
 - **Your favourites, one key away.** Eight tiles for the folders, files, apps or shell commands you open all the time.
-- **Edit everything in place.** Click an empty tile to add something. Right-click a tile to rename, retarget, move or remove it. Drag files and folders straight onto a tile. You never have to touch a config file.
+- **Edit everything in place.** Click an empty tile to add something. Right-click a tile to rename, retarget, move or remove it. Drag tiles to reorder them, and drag files and folders straight onto a tile. You never have to touch a config file.
 - **Dual-boot friendly.** Mounted drives under `/mnt` and `/media` are indexed too, and Windows system folders, `AppData` and the Recycle Bin are skipped automatically.
 - **Looks good.** Translucent dark glass with a teal accent. You can adjust the opacity from the window itself.
 - **Small and hackable.** One Python file built on GTK4. No Electron and no daemons beyond a systemd user service.
@@ -60,7 +60,8 @@ To update, `git pull` and run `./install.sh` again. To remove FindNow, run `./un
 | <kbd>1</kbd>–<kbd>8</kbd> | Open a tile (when the search box is empty) |
 | Click an empty tile | Add a **folder**, **file**, **app** or **command** |
 | Right-click a tile | Rename · change target · move left/right · remove |
-| Drag & drop | Pin the window with 📌, then drop files from your file manager onto a tile |
+| Drag a tile onto another | Swap them. Drop it on an empty tile to move it there |
+| Drag files in | Pin the window with 📌, then drop files from your file manager onto a tile |
 | ☀ | Background opacity |
 | <kbd>Esc</kbd> | Clear the search, or close |
 
