@@ -62,6 +62,7 @@ HOTKEY_PRESETS = [
     ("<Super>space", "Super+Space"),
     ("<Alt>space", "Alt+Space"),
 ]
+FALLBACK_HOTKEY = "<Control>space"  # used while a double-tap hotkey can't work
 GNOME_KEYS_SCHEMA = "org.gnome.settings-daemon.plugins.media-keys"
 GNOME_BINDING_SCHEMA = GNOME_KEYS_SCHEMA + ".custom-keybinding"
 GNOME_BINDING_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/findnow/"
@@ -197,7 +198,7 @@ popover listview row { color: #e8eef4; border-radius: 8px; padding: 6px 8px; }
 popover listview row:hover, popover listview row:selected { background: rgba(31,209,160,0.18); }
 scale trough { background: rgba(255,255,255,0.15); min-height: 4px; border-radius: 4px; }
 scale highlight { background: #1fd1a0; border-radius: 4px; }
-scale slider { background: #e8eef4; min-width: 14px; min-height: 14px; border-radius: 99px; }
+scale slider { background: #e8eef4; min-width: 14px; min-height: 14px; margin: -5px; border-radius: 99px; }
 """
 
 
@@ -1272,12 +1273,14 @@ class FindNow(Gtk.Application):
     def _hotkey_problem(self, hotkey):
         if hotkey.startswith("double:"):
             reason = DoubleTapListener.check()
+            fallback = hotkey_label(FALLBACK_HOTKEY)
             if reason == "missing-evdev":
-                return ("Double-tap needs python3-evdev. Run:  ./install.sh --double-tap  "
-                        "from the FindNow folder.")
+                return ("Double-tap needs python3-evdev. Run  ./install.sh --double-tap  "
+                        f"in the FindNow folder. Until then, {fallback} opens FindNow.")
             if reason == "no-permission":
-                return ("Double-tap needs permission to read the keyboard. Run:  "
-                        "./install.sh --double-tap  from the FindNow folder.")
+                return ("Double-tap needs permission to read the keyboard. Run  "
+                        "./install.sh --double-tap  in the FindNow folder, then reopen "
+                        f"Settings. Until then, {fallback} opens FindNow.")
             if self.listener and self.listener.error:
                 return f"Double-tap stopped: {self.listener.error}"
             return None
@@ -1295,12 +1298,16 @@ class FindNow(Gtk.Application):
             self.listener.stop()
             self.listener = None
         if hotkey.startswith("double:"):
-            set_gnome_binding("")
             modifier = hotkey.split(":", 1)[1]
             if modifier in DoubleTapListener.MODIFIERS and DoubleTapListener.check() is None:
+                set_gnome_binding("")
                 self.listener = DoubleTapListener(
                     modifier, lambda: (self.activate(), False)[1])
                 self.listener.start()
+            else:
+                # double-tap can't work here yet: keep a regular hotkey so FindNow
+                # never ends up with no way to open it
+                set_gnome_binding(FALLBACK_HOTKEY)
         else:
             set_gnome_binding(hotkey)
 
@@ -1388,6 +1395,8 @@ class FindNow(Gtk.Application):
             self._hide()  # pressing the hotkey again closes it
             return
         hotkey = self.settings.get("hotkey")
+        if hotkey and hotkey.startswith("double:") and self.listener is None:
+            GLib.idle_add(lambda: (self._apply_hotkey(hotkey), False)[1])
         self.shortcuts, self.settings = load_config()
         self.settings["hotkey"] = hotkey or self.settings.get("hotkey")
         self._apply_css()
