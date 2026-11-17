@@ -725,14 +725,18 @@ class FindNow(Gtk.Application):
         # drag a tile onto another one to swap them (empty tiles are drop-only)
         if item is not None:
             drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
-            drag.connect("prepare", lambda *_: Gdk.ContentProvider.new_for_value(
-                f"{TILE_DRAG_PREFIX}{i}"))
+            grab = [0, 0]  # where the tile was grabbed, so the drag image stays under it
+
+            def prepare(_source, x, y):
+                grab[0], grab[1] = int(x), int(y)
+                return Gdk.ContentProvider.new_for_value(f"{TILE_DRAG_PREFIX}{i}")
+            drag.connect("prepare", prepare)
 
             def drag_begin(source, _drag):
                 # the compositor grabs the pointer during a drag, which looks like
                 # a focus loss; don't let that close the window
                 self.dragging = True
-                source.set_icon(Gtk.WidgetPaintable.new(b), 20, 20)
+                source.set_icon(Gtk.WidgetPaintable.new(b), grab[0], grab[1])
                 b.add_css_class("dragging")
 
             def drag_end(*_):
