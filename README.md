@@ -2,7 +2,7 @@
 
 **Instant file search and a deck of shortcuts, one hotkey away — for Linux.**
 
-Press <kbd>Ctrl</kbd>+<kbd>Space</kbd> (or double-tap <kbd>Ctrl</kbd>) and FindNow is already on screen: start typing to find any file on your disks in milliseconds, or hit <kbd>1</kbd>–<kbd>8</kbd> to jump straight to the folders, files and apps you use every day. Pick a result and FindNow gets out of your way.
+Press <kbd>Ctrl</kbd>+<kbd>Space</kbd> and FindNow is already on screen: start typing to find any file on your disks in milliseconds, or hit <kbd>1</kbd>–<kbd>8</kbd> to jump straight to the folders, files and apps you use every day. Pick a result and FindNow gets out of your way.
 
 If you are coming from Windows and miss **Listary** or **Everything**, or from macOS and miss **Alfred** or **Spotlight**, FindNow is built for you.
 
@@ -15,7 +15,7 @@ If you are coming from Windows and miss **Listary** or **Everything**, or from m
 - **Search that keeps up with your typing.** Results update on every keystroke from a [plocate](https://plocate.sesse.net/) index. Queries take single-digit milliseconds, even across hundreds of thousands of files.
 - **Smart ranking.** Exact name matches come first, then names that start with your query, then word-boundary matches. Files in Desktop, Documents and Downloads are boosted, and hidden files are pushed down.
 - **Your favourites, one key away.** A grid of tiles (2 × 4 by default, up to 6 × 8) for the folders, files, apps or shell commands you open all the time.
-- **Any hotkey, including double-tap.** Pick <kbd>Ctrl</kbd>+<kbd>Space</kbd>, record your own combination, or double-tap <kbd>Ctrl</kbd>, <kbd>Shift</kbd> or <kbd>Alt</kbd>. Double-tap is something GNOME shortcuts can't do on their own.
+- **Any hotkey.** Pick <kbd>Ctrl</kbd>+<kbd>Space</kbd>, <kbd>Super</kbd>+<kbd>Space</kbd> or <kbd>Alt</kbd>+<kbd>Space</kbd>, or record your own combination in Settings. No extra permissions needed: it's a regular GNOME shortcut.
 - **Edit everything in place.** Click an empty tile to add something. Right-click a tile to rename, retarget, move or remove it. Drag tiles to reorder them, and drag files and folders straight onto a tile. You never have to touch a config file.
 - **Dual-boot friendly.** Mounted drives under `/mnt` and `/media` are indexed too, and Windows system folders, `AppData` and the Recycle Bin are skipped automatically.
 - **Looks good.** Translucent dark glass with a teal accent. You can adjust the opacity in Settings.
@@ -39,15 +39,7 @@ The installer:
 4. starts FindNow in the background on every login,
 5. binds <kbd>Ctrl</kbd>+<kbd>Space</kbd> in GNOME. Any custom shortcuts you already have are left alone.
 
-Want a **double-tap** hotkey like <kbd>Ctrl</kbd>, <kbd>Ctrl</kbd>? Install with:
-
-```sh
-./install.sh --double-tap
-```
-
-Then pick it in **⚙ Settings → Hotkey**. GNOME shortcuts can't express a double-tap, so FindNow listens for it itself, and that needs read access to keyboard events. `--double-tap` adds a udev rule (`/etc/udev/rules.d/70-findnow-keyboard.rules`) that grants this access to the user logged in at the local seat, through logind's standard `uaccess` mechanism. `./uninstall.sh` removes the rule again.
-
-You can also set the hotkey at install time with `./install.sh --hotkey '<Super>space'`, or change it later in Settings.
+Prefer another hotkey? Set it at install time with `./install.sh --hotkey '<Super>space'`, or change it later in Settings.
 
 Not on GNOME? Bind any key to `~/.local/bin/findnow` in your desktop's keyboard settings.
 
@@ -80,7 +72,7 @@ Everything can be done from the UI, but the files are plain text if you prefer.
 
 ```json
 {
-  "settings": { "opacity": 0.55, "rows": 2, "columns": 4, "hotkey": "double:ctrl" },
+  "settings": { "opacity": 0.55, "rows": 2, "columns": 4, "hotkey": "<Control>space" },
   "shortcuts": [
     { "name": "Projects", "path": "~/Projects" },
     { "name": "Budget",   "path": "~/Documents/budget.ods" },
@@ -91,7 +83,7 @@ Everything can be done from the UI, but the files are plain text if you prefer.
 }
 ```
 
-`hotkey` is a GTK accelerator such as `<Control>space`, or `double:ctrl`, `double:shift` or `double:alt`. Tiles beyond `rows × columns` are kept but hidden.
+`hotkey` is a GTK accelerator such as `<Control>space` or `<Super>f`. Tiles beyond `rows × columns` are kept but hidden.
 
 Each tile is one of the following. `null` leaves a tile empty.
 

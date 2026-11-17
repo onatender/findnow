@@ -13,18 +13,15 @@ Usage:
   - Drag a tile onto another → swap them (drop on an empty tile to move it there)
   - Drag files onto a tile   → pin the window (📌) first, then drop from your file manager
   - Esc                      → clear search / close
-  - ⚙ Settings               → rows & columns, hotkey (incl. Ctrl,Ctrl double-tap), opacity
+  - ⚙ Settings               → rows & columns, hotkey, opacity
 """
 import glob
 import html
 import json
 import os
 import shlex
-import select
 import subprocess
 import sys
-import threading
-import time
 
 import gi
 
@@ -53,16 +50,12 @@ DEFAULT_SETTINGS = {"opacity": 0.55, "rows": 2, "columns": 4, "hotkey": "<Contro
 ROWS_RANGE = (1, 6)
 COLUMNS_RANGE = (1, 8)
 
-# Hotkeys offered in Settings. "double:<mod>" = tap that modifier twice.
+# Hotkeys offered in Settings (any other combination can be recorded).
 HOTKEY_PRESETS = [
-    ("double:ctrl", "Ctrl, Ctrl  (double-tap)"),
-    ("double:shift", "Shift, Shift  (double-tap)"),
-    ("double:alt", "Alt, Alt  (double-tap)"),
     ("<Control>space", "Ctrl+Space"),
     ("<Super>space", "Super+Space"),
     ("<Alt>space", "Alt+Space"),
 ]
-FALLBACK_HOTKEY = "<Control>space"  # used while a double-tap hotkey can't work
 GNOME_KEYS_SCHEMA = "org.gnome.settings-daemon.plugins.media-keys"
 GNOME_BINDING_SCHEMA = GNOME_KEYS_SCHEMA + ".custom-keybinding"
 GNOME_BINDING_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/findnow/"
@@ -361,114 +354,9 @@ def set_gnome_binding(accel):
 def hotkey_label(hotkey):
     for value, label in HOTKEY_PRESETS:
         if value == hotkey:
-            return label.split("  ")[0]
-    if hotkey.startswith("double:"):
-        return hotkey
+            return label
     ok, keyval, mods = Gtk.accelerator_parse(hotkey)
     return Gtk.accelerator_get_label(keyval, mods) if ok and keyval else hotkey
-
-
-class DoubleTapListener:
-    """Watches keyboards via evdev and fires when a modifier is tapped twice.
-
-    A tap is a short press and release with no other key in between, so normal
-    shortcuts like Ctrl+C never trigger it. Needs read access to /dev/input
-    (granted to the logged-in user by install.sh --double-tap).
-    """
-    MODIFIERS = {"ctrl": (29, 97), "shift": (42, 54), "alt": (56, 100), "super": (125, 126)}
-    MAX_HOLD = 0.30   # a tap is shorter than this
-    MAX_GAP = 0.45    # second tap must finish within this after the first
-
-    def __init__(self, modifier, callback):
-        self.codes = self.MODIFIERS[modifier]
-        self.callback = callback
-        self.stop_event = threading.Event()
-        self.error = None
-
-    @staticmethod
-    def check():
-        """Return None if double-tap can work here, else a human-readable reason."""
-        try:
-            import evdev  # noqa: F401
-        except ImportError:
-            return "missing-evdev"
-        if not DoubleTapListener._keyboards():
-            return "no-permission"
-        return None
-
-    @staticmethod
-    def _keyboards():
-        import evdev
-        found = []
-        for path in evdev.list_devices():  # only lists devices we may open
-            try:
-                dev = evdev.InputDevice(path)
-                keys = dev.capabilities().get(evdev.ecodes.EV_KEY, [])
-                if evdev.ecodes.KEY_A in keys and evdev.ecodes.KEY_LEFTCTRL in keys:
-                    found.append(dev)
-                else:
-                    dev.close()
-            except OSError:
-                pass
-        return found
-
-    def start(self):
-        threading.Thread(target=self._run, name="findnow-double-tap", daemon=True).start()
-
-    def stop(self):
-        self.stop_event.set()
-
-    def _run(self):
-        devices, last_scan = {}, 0.0
-        held = clean = False
-        pressed_at = last_tap = 0.0
-        try:
-            while not self.stop_event.is_set():
-                now = time.monotonic()
-                if now - last_scan > 5:  # pick up hot-plugged keyboards
-                    for dev in self._keyboards():
-                        if dev.path in devices:
-                            dev.close()
-                        else:
-                            devices[dev.path] = dev
-                    last_scan = now
-                if not devices:
-                    self.stop_event.wait(1)
-                    continue
-                ready, _, _ = select.select(list(devices.values()), [], [], 1.0)
-                for dev in ready:
-                    try:
-                        events = list(dev.read())
-                    except OSError:  # unplugged
-                        devices.pop(dev.path, None)
-                        continue
-                    for ev in events:
-                        if ev.type != 1:  # EV_KEY
-                            continue
-                        now = time.monotonic()
-                        if ev.code in self.codes:
-                            if ev.value == 1 and not held:
-                                held, clean, pressed_at = True, True, now
-                            elif ev.value == 2:
-                                clean = False  # auto-repeat: held too long
-                            elif ev.value == 0:
-                                held = False
-                                if clean and now - pressed_at < self.MAX_HOLD:
-                                    if last_tap and now - last_tap < self.MAX_GAP:
-                                        last_tap = 0.0
-                                        GLib.idle_add(self.callback)
-                                    else:
-                                        last_tap = now
-                                else:
-                                    last_tap = 0.0
-                        elif ev.value == 1:  # any other key breaks the tap
-                            clean, last_tap = False, 0.0
-        except Exception as e:  # never take the app down with the listener
-            self.error = str(e)
-            print(f"Double-tap listener stopped: {e}", file=sys.stderr)
-        finally:
-            for dev in devices.values():
-                dev.close()
 
 
 # ---------------------------------------------------------------- search
@@ -556,7 +444,6 @@ class FindNow(Gtk.Application):
         self.start_hidden = "--background" in sys.argv
         self.shortcuts = []
         self.settings = dict(DEFAULT_SETTINGS)
-        self.listener = None     # DoubleTapListener when a double-tap hotkey is active
         self.busy = 0            # open dialogs: don't auto-hide while > 0
         self.dragging = False    # a tile is being dragged: don't auto-hide
         self.css = Gtk.CssProvider()
@@ -1163,9 +1050,6 @@ class FindNow(Gtk.Application):
             if problem:
                 hotkey_note.add_css_class("warning")
                 hotkey_note.set_label(problem)
-            elif current.startswith("double:"):
-                hotkey_note.set_label("Tap the key twice quickly. Shortcuts like Ctrl+C "
-                                      "never trigger it.")
             else:
                 hotkey_note.set_label("Set as a GNOME keyboard shortcut.")
 
@@ -1271,19 +1155,6 @@ class FindNow(Gtk.Application):
         w.present()
 
     def _hotkey_problem(self, hotkey):
-        if hotkey.startswith("double:"):
-            reason = DoubleTapListener.check()
-            fallback = hotkey_label(FALLBACK_HOTKEY)
-            if reason == "missing-evdev":
-                return ("Double-tap needs python3-evdev. Run  ./install.sh --double-tap  "
-                        f"in the FindNow folder. Until then, {fallback} opens FindNow.")
-            if reason == "no-permission":
-                return ("Double-tap needs permission to read the keyboard. Run  "
-                        "./install.sh --double-tap  in the FindNow folder, then reopen "
-                        f"Settings. Until then, {fallback} opens FindNow.")
-            if self.listener and self.listener.error:
-                return f"Double-tap stopped: {self.listener.error}"
-            return None
         source = Gio.SettingsSchemaSource.get_default()
         if not source or not source.lookup(GNOME_BINDING_SCHEMA, True):
             return (f"Not on GNOME: bind {hotkey_label(hotkey)} to {LAUNCHER} in your "
@@ -1291,25 +1162,12 @@ class FindNow(Gtk.Application):
         return None
 
     def _apply_hotkey(self, hotkey):
-        """Switch between a GNOME shortcut and the double-tap listener."""
+        """Save the hotkey and bind it as a GNOME custom shortcut."""
+        if not hotkey:
+            hotkey = DEFAULT_SETTINGS["hotkey"]
         self.settings["hotkey"] = hotkey
         self._save()
-        if self.listener:
-            self.listener.stop()
-            self.listener = None
-        if hotkey.startswith("double:"):
-            modifier = hotkey.split(":", 1)[1]
-            if modifier in DoubleTapListener.MODIFIERS and DoubleTapListener.check() is None:
-                set_gnome_binding("")
-                self.listener = DoubleTapListener(
-                    modifier, lambda: (self.activate(), False)[1])
-                self.listener.start()
-            else:
-                # double-tap can't work here yet: keep a regular hotkey so FindNow
-                # never ends up with no way to open it
-                set_gnome_binding(FALLBACK_HOTKEY)
-        else:
-            set_gnome_binding(hotkey)
+        set_gnome_binding(hotkey)
 
     # ---- open / hide
     def _launch(self, item):
@@ -1395,8 +1253,6 @@ class FindNow(Gtk.Application):
             self._hide()  # pressing the hotkey again closes it
             return
         hotkey = self.settings.get("hotkey")
-        if hotkey and hotkey.startswith("double:") and self.listener is None:
-            GLib.idle_add(lambda: (self._apply_hotkey(hotkey), False)[1])
         self.shortcuts, self.settings = load_config()
         self.settings["hotkey"] = hotkey or self.settings.get("hotkey")
         self._apply_css()

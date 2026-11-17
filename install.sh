@@ -1,23 +1,17 @@
 #!/bin/sh
 # Install FindNow for the current user (Ubuntu / Debian, GNOME).
-# Usage: ./install.sh [--hotkey '<Control>space'] [--double-tap]
+# Usage: ./install.sh [--hotkey '<Control>space']
 #
 #   --hotkey ACCEL   GNOME shortcut that opens FindNow (default: <Control>space).
 #                    You can change it later in FindNow → ⚙ Settings.
-#   --double-tap     Also allow double-tap hotkeys such as Ctrl, Ctrl. This installs a
-#                    udev rule that lets the logged-in user read keyboard events
-#                    (the same access a desktop session already has), so FindNow can
-#                    see modifier taps that GNOME shortcuts cannot express.
 set -e
 cd "$(dirname "$0")"
 
 HOTKEY='<Control>space'
 HOTKEY_GIVEN=no
-DOUBLE_TAP=no
 while [ $# -gt 0 ]; do
   case "$1" in
     --hotkey) HOTKEY="${2:?--hotkey needs a value}"; HOTKEY_GIVEN=yes; shift 2 ;;
-    --double-tap) DOUBLE_TAP=yes; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -25,15 +19,7 @@ SHARE="$HOME/.local/share/findnow"
 UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 echo "→ Installing dependencies (may ask for your sudo password)…"
-sudo apt-get install -y python3-gi gir1.2-gtk-4.0 libglib2.0-bin plocate python3-evdev
-
-if [ "$DOUBLE_TAP" = yes ]; then
-  echo "→ Allowing the logged-in user to read keyboards (for double-tap hotkeys)…"
-  echo 'SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"' \
-    | sudo tee /etc/udev/rules.d/70-findnow-keyboard.rules >/dev/null
-  sudo udevadm control --reload-rules
-  sudo udevadm trigger --subsystem-match=input --action=change
-fi
+sudo apt-get install -y python3-gi gir1.2-gtk-4.0 libglib2.0-bin plocate
 
 echo "→ Copying files…"
 mkdir -p "$SHARE" "$HOME/.local/bin" "$UNITS"

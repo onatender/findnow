@@ -6,12 +6,6 @@ rm -f "$UNITS/findnow.service" "$UNITS/findnow-index.service" "$UNITS/findnow-in
       "$HOME/.local/bin/findnow"
 rm -rf "$HOME/.local/share/findnow" "${XDG_CACHE_HOME:-$HOME/.cache}/findnow"
 systemctl --user daemon-reload
-if [ -f /etc/udev/rules.d/70-findnow-keyboard.rules ]; then
-  echo "→ Removing the double-tap keyboard rule (may ask for your sudo password)…"
-  sudo rm -f /etc/udev/rules.d/70-findnow-keyboard.rules
-  sudo udevadm control --reload-rules
-  sudo udevadm trigger --subsystem-match=input --action=change
-fi
 
 if command -v gsettings >/dev/null 2>&1 && \
    gsettings list-schemas | grep -qx org.gnome.settings-daemon.plugins.media-keys; then
