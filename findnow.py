@@ -368,6 +368,7 @@ class FindNow(Gtk.Application):
         self.shortcuts = [None] * TILE_COUNT
         self.settings = dict(DEFAULT_SETTINGS)
         self.busy = 0            # open dialogs: don't auto-hide while > 0
+        self.dragging = False    # a tile is being dragged: don't auto-hide
         self.css = Gtk.CssProvider()
         self.cancellable = None  # Gio.Cancellable of the running search
         self.results = []        # [(path, is_dir)]
@@ -660,10 +661,19 @@ class FindNow(Gtk.Application):
                 f"{TILE_DRAG_PREFIX}{i}"))
 
             def drag_begin(source, _drag):
+                # the compositor grabs the pointer during a drag, which looks like
+                # a focus loss; don't let that close the window
+                self.dragging = True
                 source.set_icon(Gtk.WidgetPaintable.new(b), 20, 20)
                 b.add_css_class("dragging")
+
+            def drag_end(*_):
+                b.remove_css_class("dragging")
+                # keep the guard briefly so the focus that returns after the drop
+                # settles before auto-hide is allowed again
+                GLib.timeout_add(400, self._drag_finished)
             drag.connect("drag-begin", drag_begin)
-            drag.connect("drag-end", lambda *_: b.remove_css_class("dragging"))
+            drag.connect("drag-end", drag_end)
             b.add_controller(drag)
 
         # accepts tiles (to reorder) and files/folders from a file manager (to add)
@@ -958,10 +968,16 @@ class FindNow(Gtk.Application):
                 return True
         return False
 
+    def _drag_finished(self):
+        self.dragging = False
+        if self.window.get_visible() and not self.window.is_active():
+            self.window.present()
+        return False
+
     def _can_auto_hide(self):
         w = self.window
         return (not w.is_active() and w.get_visible() and self.busy == 0
-                and not self.pin.get_active())
+                and not self.dragging and not self.pin.get_active())
 
     def _on_focus_change(self, _w, _p):
         if self._can_auto_hide():
