@@ -2,7 +2,7 @@
 
 **Instant file search and a deck of shortcuts, one hotkey away — for Linux.**
 
-Press <kbd>Ctrl</kbd>+<kbd>Space</kbd> and FindNow is already on screen: start typing to find any file on your disks in milliseconds, or hit <kbd>1</kbd>–<kbd>8</kbd> to jump straight to the folders, files and apps you use every day. Pick a result and FindNow gets out of your way.
+Press <kbd>Ctrl</kbd>+<kbd>Space</kbd> (or double-tap <kbd>Ctrl</kbd>) and FindNow is already on screen: start typing to find any file on your disks in milliseconds, or hit <kbd>1</kbd>–<kbd>8</kbd> to jump straight to the folders, files and apps you use every day. Pick a result and FindNow gets out of your way.
 
 If you are coming from Windows and miss **Listary** or **Everything**, or from macOS and miss **Alfred** or **Spotlight**, FindNow is built for you.
 
@@ -14,10 +14,11 @@ If you are coming from Windows and miss **Listary** or **Everything**, or from m
 - **It's instant.** FindNow stays resident in the background with its window pre-built, so the hotkey shows it immediately, with no startup delay.
 - **Search that keeps up with your typing.** Results update on every keystroke from a [plocate](https://plocate.sesse.net/) index. Queries take single-digit milliseconds, even across hundreds of thousands of files.
 - **Smart ranking.** Exact name matches come first, then names that start with your query, then word-boundary matches. Files in Desktop, Documents and Downloads are boosted, and hidden files are pushed down.
-- **Your favourites, one key away.** Eight tiles for the folders, files, apps or shell commands you open all the time.
+- **Your favourites, one key away.** A grid of tiles (2 × 4 by default, up to 6 × 8) for the folders, files, apps or shell commands you open all the time.
+- **Any hotkey, including double-tap.** Pick <kbd>Ctrl</kbd>+<kbd>Space</kbd>, record your own combination, or double-tap <kbd>Ctrl</kbd>, <kbd>Shift</kbd> or <kbd>Alt</kbd>. Double-tap is something GNOME shortcuts can't do on their own.
 - **Edit everything in place.** Click an empty tile to add something. Right-click a tile to rename, retarget, move or remove it. Drag tiles to reorder them, and drag files and folders straight onto a tile. You never have to touch a config file.
 - **Dual-boot friendly.** Mounted drives under `/mnt` and `/media` are indexed too, and Windows system folders, `AppData` and the Recycle Bin are skipped automatically.
-- **Looks good.** Translucent dark glass with a teal accent. You can adjust the opacity from the window itself.
+- **Looks good.** Translucent dark glass with a teal accent. You can adjust the opacity in Settings.
 - **Small and hackable.** One Python file built on GTK4. No Electron and no daemons beyond a systemd user service.
 
 ## Install
@@ -38,11 +39,15 @@ The installer:
 4. starts FindNow in the background on every login,
 5. binds <kbd>Ctrl</kbd>+<kbd>Space</kbd> in GNOME. Any custom shortcuts you already have are left alone.
 
-Prefer another hotkey?
+Want a **double-tap** hotkey like <kbd>Ctrl</kbd>, <kbd>Ctrl</kbd>? Install with:
 
 ```sh
-./install.sh --hotkey '<Super>space'
+./install.sh --double-tap
 ```
+
+Then pick it in **⚙ Settings → Hotkey**. GNOME shortcuts can't express a double-tap, so FindNow listens for it itself, and that needs read access to keyboard events. `--double-tap` adds a udev rule (`/etc/udev/rules.d/70-findnow-keyboard.rules`) that grants this access to the user logged in at the local seat, through logind's standard `uaccess` mechanism. `./uninstall.sh` removes the rule again.
+
+You can also set the hotkey at install time with `./install.sh --hotkey '<Super>space'`, or change it later in Settings.
 
 Not on GNOME? Bind any key to `~/.local/bin/findnow` in your desktop's keyboard settings.
 
@@ -52,17 +57,17 @@ To update, `git pull` and run `./install.sh` again. To remove FindNow, run `./un
 
 | Key / action | What it does |
 |---|---|
-| <kbd>Ctrl</kbd>+<kbd>Space</kbd> | Show / hide FindNow |
+| <kbd>Ctrl</kbd>+<kbd>Space</kbd> | Show / hide FindNow (configurable in ⚙ Settings) |
 | *just type* | Search files and folders by name. Use several words to narrow it down (`q3 report`) |
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>PgUp</kbd> <kbd>PgDn</kbd> | Move through results |
 | <kbd>Enter</kbd> | Open the selected result with its default app |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Show the result in its folder (file manager opens with it selected) |
-| <kbd>1</kbd>–<kbd>8</kbd> | Open a tile (when the search box is empty) |
+| <kbd>1</kbd>–<kbd>9</kbd> | Open a tile (when the search box is empty) |
 | Click an empty tile | Add a **folder**, **file**, **app** or **command** |
 | Right-click a tile | Rename · change target · move left/right · remove |
 | Drag a tile onto another | Swap them. Drop it on an empty tile to move it there |
 | Drag files in | Pin the window with 📌, then drop files from your file manager onto a tile |
-| ☀ | Background opacity |
+| ⚙ | Settings: rows & columns, hotkey, background opacity, rebuild index |
 | <kbd>Esc</kbd> | Clear the search, or close |
 
 FindNow also closes by itself when it loses focus.
@@ -75,7 +80,7 @@ Everything can be done from the UI, but the files are plain text if you prefer.
 
 ```json
 {
-  "settings": { "opacity": 0.55 },
+  "settings": { "opacity": 0.55, "rows": 2, "columns": 4, "hotkey": "double:ctrl" },
   "shortcuts": [
     { "name": "Projects", "path": "~/Projects" },
     { "name": "Budget",   "path": "~/Documents/budget.ods" },
@@ -85,6 +90,8 @@ Everything can be done from the UI, but the files are plain text if you prefer.
   ]
 }
 ```
+
+`hotkey` is a GTK accelerator such as `<Control>space`, or `double:ctrl`, `double:shift` or `double:alt`. Tiles beyond `rows × columns` are kept but hidden.
 
 Each tile is one of the following. `null` leaves a tile empty.
 
@@ -133,7 +140,7 @@ Ctrl+Space ─► GNOME custom shortcut ─► ~/.local/bin/findnow
 ## Roadmap
 
 - Windows version, backed by Everything's `es.exe`
-- More tiles and named tabs or groups
+- Named tabs or groups of tiles
 - Content search and recently opened files
 
 ## Contributing
