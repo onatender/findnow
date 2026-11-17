@@ -7,20 +7,24 @@ File index (plocate):   ~/.cache/findnow/*.db   (rebuilt by index.sh every 15 mi
 
 Usage:
   - Start typing             → search files; ↑↓ select, Enter open, Ctrl+Enter show in folder
-  - 1–8 (empty search)       → open that tile
+  - 1–9 (empty search)       → open that tile
   - Click an empty tile      → add a folder, file, app or command
   - Right-click a tile       → rename, change target, move, remove
   - Drag a tile onto another → swap them (drop on an empty tile to move it there)
   - Drag files onto a tile   → pin the window (📌) first, then drop from your file manager
   - Esc                      → clear search / close
+  - ⚙ Settings               → rows & columns, hotkey (incl. Ctrl,Ctrl double-tap), opacity
 """
 import glob
 import html
 import json
 import os
 import shlex
+import select
 import subprocess
 import sys
+import threading
+import time
 
 import gi
 
@@ -41,13 +45,27 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "shortcuts.json")
 INDEX_DIR = os.path.join(GLib.get_user_cache_dir(), "findnow")
 INDEX_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.sh")
 HOME = os.path.expanduser("~")
-TILE_COUNT = 8
-COLUMNS = 4
 RAW_RESULTS = 4000   # candidates fetched from plocate before ranking
 SHOWN_RESULTS = 60   # results listed in the UI
 TILE_DRAG_PREFIX = "findnow-tile:"
 
-DEFAULT_SETTINGS = {"opacity": 0.55}
+DEFAULT_SETTINGS = {"opacity": 0.55, "rows": 2, "columns": 4, "hotkey": "<Control>space"}
+ROWS_RANGE = (1, 6)
+COLUMNS_RANGE = (1, 8)
+
+# Hotkeys offered in Settings. "double:<mod>" = tap that modifier twice.
+HOTKEY_PRESETS = [
+    ("double:ctrl", "Ctrl, Ctrl  (double-tap)"),
+    ("double:shift", "Shift, Shift  (double-tap)"),
+    ("double:alt", "Alt, Alt  (double-tap)"),
+    ("<Control>space", "Ctrl+Space"),
+    ("<Super>space", "Super+Space"),
+    ("<Alt>space", "Alt+Space"),
+]
+GNOME_KEYS_SCHEMA = "org.gnome.settings-daemon.plugins.media-keys"
+GNOME_BINDING_SCHEMA = GNOME_KEYS_SCHEMA + ".custom-keybinding"
+GNOME_BINDING_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/findnow/"
+LAUNCHER = os.path.join(HOME, ".local", "bin", "findnow")
 
 # Fixed palette, independent of the system theme: translucent dark glass + teal accent.
 CSS = """
@@ -148,6 +166,30 @@ button.primary {
   border-radius: 8px; padding: 6px 16px; box-shadow: none;
 }
 button.primary:hover { background: #3be0b2; }
+.section { font-size: 11px; font-weight: 800; letter-spacing: 1.5px; color: #1fd1a0; }
+.field { color: #e8eef4; }
+.note { font-size: 11px; color: rgba(232,238,244,0.55); }
+.note.warning { color: #ffb86b; }
+window.dialog spinbutton {
+  background: rgba(255,255,255,0.06); color: #e8eef4;
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 8px;
+}
+window.dialog spinbutton text { color: #e8eef4; }
+window.dialog spinbutton button {
+  background: transparent; color: #e8eef4; border: none; box-shadow: none;
+}
+window.dialog spinbutton button:hover { color: #1fd1a0; }
+window.dialog dropdown > button, window.dialog button.secondary {
+  background: rgba(255,255,255,0.06); color: #e8eef4; box-shadow: none;
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; min-height: 34px;
+}
+window.dialog dropdown > button:hover, window.dialog button.secondary:hover {
+  border-color: #1fd1a0; background: rgba(31,209,160,0.10);
+}
+window.dialog button.recording { border-color: #1fd1a0; color: #1fd1a0; background: rgba(31,209,160,0.14); }
+popover listview { background: transparent; }
+popover listview row { color: #e8eef4; border-radius: 8px; padding: 6px 8px; }
+popover listview row:hover, popover listview row:selected { background: rgba(31,209,160,0.18); }
 scale trough { background: rgba(255,255,255,0.15); min-height: 4px; border-radius: 4px; }
 scale highlight { background: #1fd1a0; border-radius: 4px; }
 scale slider { background: #e8eef4; min-width: 14px; min-height: 14px; border-radius: 99px; }
@@ -178,11 +220,18 @@ def default_shortcuts():
             if info:
                 tiles.append({"name": info.get_display_name() or name, "app": app_id})
                 break
-    return tiles[:TILE_COUNT]
+    return tiles[:8]
+
+
+def clamp(value, low, high, default):
+    try:
+        return max(low, min(high, int(value)))
+    except (TypeError, ValueError):
+        return default
 
 
 def load_config():
-    """Return (shortcuts[TILE_COUNT], settings). Accepts a bare list as well."""
+    """Return (shortcuts, settings). Tiles beyond the current grid size are kept."""
     if not os.path.exists(CONFIG_FILE):
         save_config(default_shortcuts(), dict(DEFAULT_SETTINGS))
     try:
@@ -190,20 +239,21 @@ def load_config():
             data = json.load(f)
     except (OSError, ValueError) as e:
         print(f"Could not read shortcuts.json: {e}", file=sys.stderr)
-        return ([{"name": "⚠ JSON error", "path": CONFIG_FILE}] + [None] * (TILE_COUNT - 1),
-                dict(DEFAULT_SETTINGS))
+        return [{"name": "⚠ JSON error", "path": CONFIG_FILE}], dict(DEFAULT_SETTINGS)
     if isinstance(data, list):
         items, settings = data, {}
     else:
         items, settings = data.get("shortcuts", []), data.get("settings", {})
-    items = [v if isinstance(v, dict) else None for v in items][:TILE_COUNT]
-    items += [None] * (TILE_COUNT - len(items))
+    items = [v if isinstance(v, dict) else None for v in items]
     return items, {**DEFAULT_SETTINGS, **settings}
 
 
 def save_config(shortcuts, settings):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     tmp = CONFIG_FILE + ".tmp"
+    shortcuts = list(shortcuts)
+    while shortcuts and shortcuts[-1] is None:  # drop trailing empty tiles
+        shortcuts.pop()
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"settings": settings, "shortcuts": shortcuts}, f, ensure_ascii=False, indent=2)
     os.replace(tmp, CONFIG_FILE)
@@ -280,6 +330,139 @@ def set_margins(widget, px):
     widget.set_margin_start(px)
     widget.set_margin_end(px)
     return widget
+
+
+# ---------------------------------------------------------------- hotkey
+
+def set_gnome_binding(accel):
+    """Bind (or with accel='' unbind) the FindNow launcher as a GNOME custom shortcut."""
+    source = Gio.SettingsSchemaSource.get_default()
+    if not source or not source.lookup(GNOME_BINDING_SCHEMA, True):
+        return False
+    keys = Gio.Settings.new(GNOME_KEYS_SCHEMA)
+    paths = list(keys.get_strv("custom-keybindings"))
+    if GNOME_BINDING_PATH not in paths:
+        paths.append(GNOME_BINDING_PATH)
+        keys.set_strv("custom-keybindings", paths)
+    binding = Gio.Settings.new_with_path(GNOME_BINDING_SCHEMA, GNOME_BINDING_PATH)
+    binding.set_string("name", "FindNow")
+    binding.set_string("command", LAUNCHER)
+    binding.set_string("binding", accel)
+    Gio.Settings.sync()
+    return True
+
+
+def hotkey_label(hotkey):
+    for value, label in HOTKEY_PRESETS:
+        if value == hotkey:
+            return label.split("  ")[0]
+    if hotkey.startswith("double:"):
+        return hotkey
+    ok, keyval, mods = Gtk.accelerator_parse(hotkey)
+    return Gtk.accelerator_get_label(keyval, mods) if ok and keyval else hotkey
+
+
+class DoubleTapListener:
+    """Watches keyboards via evdev and fires when a modifier is tapped twice.
+
+    A tap is a short press and release with no other key in between, so normal
+    shortcuts like Ctrl+C never trigger it. Needs read access to /dev/input
+    (granted to the logged-in user by install.sh --double-tap).
+    """
+    MODIFIERS = {"ctrl": (29, 97), "shift": (42, 54), "alt": (56, 100), "super": (125, 126)}
+    MAX_HOLD = 0.30   # a tap is shorter than this
+    MAX_GAP = 0.45    # second tap must finish within this after the first
+
+    def __init__(self, modifier, callback):
+        self.codes = self.MODIFIERS[modifier]
+        self.callback = callback
+        self.stop_event = threading.Event()
+        self.error = None
+
+    @staticmethod
+    def check():
+        """Return None if double-tap can work here, else a human-readable reason."""
+        try:
+            import evdev  # noqa: F401
+        except ImportError:
+            return "missing-evdev"
+        if not DoubleTapListener._keyboards():
+            return "no-permission"
+        return None
+
+    @staticmethod
+    def _keyboards():
+        import evdev
+        found = []
+        for path in evdev.list_devices():  # only lists devices we may open
+            try:
+                dev = evdev.InputDevice(path)
+                keys = dev.capabilities().get(evdev.ecodes.EV_KEY, [])
+                if evdev.ecodes.KEY_A in keys and evdev.ecodes.KEY_LEFTCTRL in keys:
+                    found.append(dev)
+                else:
+                    dev.close()
+            except OSError:
+                pass
+        return found
+
+    def start(self):
+        threading.Thread(target=self._run, name="findnow-double-tap", daemon=True).start()
+
+    def stop(self):
+        self.stop_event.set()
+
+    def _run(self):
+        devices, last_scan = {}, 0.0
+        held = clean = False
+        pressed_at = last_tap = 0.0
+        try:
+            while not self.stop_event.is_set():
+                now = time.monotonic()
+                if now - last_scan > 5:  # pick up hot-plugged keyboards
+                    for dev in self._keyboards():
+                        if dev.path in devices:
+                            dev.close()
+                        else:
+                            devices[dev.path] = dev
+                    last_scan = now
+                if not devices:
+                    self.stop_event.wait(1)
+                    continue
+                ready, _, _ = select.select(list(devices.values()), [], [], 1.0)
+                for dev in ready:
+                    try:
+                        events = list(dev.read())
+                    except OSError:  # unplugged
+                        devices.pop(dev.path, None)
+                        continue
+                    for ev in events:
+                        if ev.type != 1:  # EV_KEY
+                            continue
+                        now = time.monotonic()
+                        if ev.code in self.codes:
+                            if ev.value == 1 and not held:
+                                held, clean, pressed_at = True, True, now
+                            elif ev.value == 2:
+                                clean = False  # auto-repeat: held too long
+                            elif ev.value == 0:
+                                held = False
+                                if clean and now - pressed_at < self.MAX_HOLD:
+                                    if last_tap and now - last_tap < self.MAX_GAP:
+                                        last_tap = 0.0
+                                        GLib.idle_add(self.callback)
+                                    else:
+                                        last_tap = now
+                                else:
+                                    last_tap = 0.0
+                        elif ev.value == 1:  # any other key breaks the tap
+                            clean, last_tap = False, 0.0
+        except Exception as e:  # never take the app down with the listener
+            self.error = str(e)
+            print(f"Double-tap listener stopped: {e}", file=sys.stderr)
+        finally:
+            for dev in devices.values():
+                dev.close()
 
 
 # ---------------------------------------------------------------- search
@@ -365,8 +548,9 @@ class FindNow(Gtk.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.start_hidden = "--background" in sys.argv
-        self.shortcuts = [None] * TILE_COUNT
+        self.shortcuts = []
         self.settings = dict(DEFAULT_SETTINGS)
+        self.listener = None     # DoubleTapListener when a double-tap hotkey is active
         self.busy = 0            # open dialogs: don't auto-hide while > 0
         self.dragging = False    # a tile is being dragged: don't auto-hide
         self.css = Gtk.CssProvider()
@@ -379,8 +563,23 @@ class FindNow(Gtk.Application):
         self.hold()  # keep running while the window is hidden
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), self.css, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        self.shortcuts, self.settings = load_config()
         self._apply_css()
         self._build_window()
+        self._apply_hotkey(self.settings.get("hotkey", DEFAULT_SETTINGS["hotkey"]))
+
+    # ---- grid size
+    @property
+    def rows(self):
+        return clamp(self.settings.get("rows"), *ROWS_RANGE, DEFAULT_SETTINGS["rows"])
+
+    @property
+    def columns(self):
+        return clamp(self.settings.get("columns"), *COLUMNS_RANGE, DEFAULT_SETTINGS["columns"])
+
+    @property
+    def tile_count(self):
+        return self.rows * self.columns
 
     def _apply_css(self):
         opacity = max(0.0, min(1.0, float(self.settings.get("opacity", 0.55))))
@@ -420,15 +619,10 @@ class FindNow(Gtk.Application):
                                         Gtk.ToggleButton)
         top.append(self.pin)
 
-        appearance = self._toolbar_button("display-brightness-symbolic", "Opacity",
-                                          Gtk.MenuButton)
-        appearance.set_popover(self._opacity_popover())
-        top.append(appearance)
-
-        json_btn = self._toolbar_button("text-x-generic-symbolic",
-                                        "Open shortcuts.json (advanced)")
-        json_btn.connect("clicked", lambda *_: self._launch({"path": CONFIG_FILE}))
-        top.append(json_btn)
+        settings_btn = self._toolbar_button("emblem-system-symbolic",
+                                            "Settings: rows & columns, hotkey, opacity")
+        settings_btn.connect("clicked", lambda *_: self._open_settings())
+        top.append(settings_btn)
 
         close = self._toolbar_button("window-close-symbolic", "Close (Esc)")
         close.connect("clicked", lambda *_: self._hide())
@@ -443,7 +637,8 @@ class FindNow(Gtk.Application):
         self.result_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
         self.result_list.connect("row-activated", lambda _l, r: self._open_result(r.get_index()))
         self.scroller = Gtk.ScrolledWindow(child=self.result_list,
-                                           hscrollbar_policy=Gtk.PolicyType.NEVER)
+                                           hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                           min_content_height=250)
         self.scroller.add_css_class("results-area")
         self.status = Gtk.Label(valign=Gtk.Align.CENTER, wrap=True,
                                 justify=Gtk.Justification.CENTER)
@@ -478,32 +673,13 @@ class FindNow(Gtk.Application):
         self.window = w
 
     def _hint_tiles(self):
-        self.hint.set_label("type: search  ·  1–8 open  ·  empty tile: add  ·  "
+        self.hint.set_label("type: search  ·  1–9 open  ·  empty tile: add  ·  "
                             "right-click: edit  ·  drag to reorder  ·  Esc close")
 
     def _hint_results(self, count):
         more = "+" if count >= SHOWN_RESULTS else ""
         self.hint.set_label(f"{count}{more} results  ·  ↑↓ select  ·  Enter open  ·  "
                             "Ctrl+Enter show in folder  ·  Esc clear")
-
-    def _opacity_popover(self):
-        p = Gtk.Popover()
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        label = Gtk.Label(label="BACKGROUND OPACITY", xalign=0)
-        label.add_css_class("menu-title")
-        self.opacity_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 1.0, 0.05)
-        self.opacity_scale.set_size_request(200, -1)
-        self.opacity_scale.set_draw_value(False)
-
-        def changed(s):
-            self.settings["opacity"] = round(s.get_value(), 2)
-            self._apply_css()
-        self.opacity_scale.connect("value-changed", changed)
-        p.connect("closed", lambda *_: self._save())
-        box.append(label)
-        box.append(self.opacity_scale)
-        p.set_child(box)
-        return p
 
     # ---- search
     def _on_search_changed(self, entry):
@@ -614,8 +790,11 @@ class FindNow(Gtk.Application):
     def _fill_tiles(self):
         while (c := self.grid.get_first_child()) is not None:
             self.grid.remove(c)
-        for i, item in enumerate(self.shortcuts):
-            self.grid.attach(self._tile(i, item), i % COLUMNS, i // COLUMNS, 1, 1)
+        n, cols = self.tile_count, self.columns
+        if len(self.shortcuts) < n:
+            self.shortcuts += [None] * (n - len(self.shortcuts))
+        for i in range(n):
+            self.grid.attach(self._tile(i, self.shortcuts[i]), i % cols, i // cols, 1, 1)
 
     def _tile(self, i, item):
         b = Gtk.Button()
@@ -642,6 +821,8 @@ class FindNow(Gtk.Application):
             b.connect("clicked", lambda *_: self._launch(item))
 
         badge = Gtk.Label(label=str(i + 1), halign=Gtk.Align.START, valign=Gtk.Align.START)
+        if i >= 9:
+            badge.set_opacity(0.5)  # no number key beyond 9
         badge.add_css_class("badge")
         set_margins(badge, 8)
 
@@ -740,7 +921,7 @@ class FindNow(Gtk.Application):
         ]
         if i > 0:
             entries.append(("go-previous-symbolic", "Move left", lambda: self._move(i, i - 1), False))
-        if i < TILE_COUNT - 1:
+        if i < self.tile_count - 1:
             entries.append(("go-next-symbolic", "Move right", lambda: self._move(i, i + 1), False))
         entries.append(("user-trash-symbolic", "Remove", lambda: self._assign(i, None), True))
         self._show_popover(anchor, item.get("name", ""), entries)
@@ -771,7 +952,7 @@ class FindNow(Gtk.Application):
                 source = int(value[len(TILE_DRAG_PREFIX):])
             except ValueError:
                 return False
-            if source != i and 0 <= source < TILE_COUNT:
+            if source != i and 0 <= source < self.tile_count:
                 # defer the rebuild: the dragged tile is still mid-drag right now
                 GLib.idle_add(lambda: (self._move(source, i), False)[1])
             return True
@@ -780,7 +961,8 @@ class FindNow(Gtk.Application):
         if not files:
             return False
         # extra files go to the next empty tiles
-        targets = [i] + [j for j in range(TILE_COUNT) if j != i and self.shortcuts[j] is None]
+        targets = [i] + [j for j in range(self.tile_count)
+                         if j != i and self.shortcuts[j] is None]
         for j, f in zip(targets, files):
             self.shortcuts[j] = item_from_path(f.get_path())
         self._save()
@@ -912,6 +1094,211 @@ class FindNow(Gtk.Application):
         w.present()
         search.grab_focus()
 
+    # ---- settings
+    def _open_settings(self):
+        w = self._dialog("FindNow Settings", 420)
+        box = set_margins(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10), 18)
+
+        def section(title):
+            l = Gtk.Label(label=title, xalign=0, margin_top=6)
+            l.add_css_class("section")
+            box.append(l)
+
+        def row(label, widget):
+            r_ = Gtk.Box(spacing=12)
+            l = Gtk.Label(label=label, xalign=0, hexpand=True)
+            l.add_css_class("field")
+            r_.append(l)
+            r_.append(widget)
+            box.append(r_)
+
+        # layout
+        section("LAYOUT")
+        for key, label, (low, high) in (("rows", "Rows", ROWS_RANGE),
+                                        ("columns", "Columns", COLUMNS_RANGE)):
+            spin = Gtk.SpinButton.new_with_range(low, high, 1)
+            spin.set_value(getattr(self, key))
+
+            def changed(sp, key=key):
+                self.settings[key] = int(sp.get_value())
+                self._save()
+                self._fill_tiles()
+            spin.connect("value-changed", changed)
+            row(label, spin)
+        layout_note = Gtk.Label(xalign=0, wrap=True)
+        layout_note.add_css_class("note")
+        layout_note.set_label("Tiles hidden by a smaller grid are kept and come back when you "
+                              "make it bigger.")
+        box.append(layout_note)
+
+        # hotkey
+        section("HOTKEY")
+        labels = [label for _v, label in HOTKEY_PRESETS] + ["Custom…"]
+        dropdown = Gtk.DropDown.new_from_strings(labels)
+        record = Gtk.Button()
+        record.add_css_class("secondary")
+        hotkey_note = Gtk.Label(xalign=0, wrap=True)
+        hotkey_note.add_css_class("note")
+        state = {"recording": False, "updating": False}
+
+        def refresh():
+            current = self.settings.get("hotkey", DEFAULT_SETTINGS["hotkey"])
+            values = [v for v, _l in HOTKEY_PRESETS]
+            state["updating"] = True
+            dropdown.set_selected(values.index(current) if current in values else len(values))
+            state["updating"] = False
+            record.set_label("Press a key combination…" if state["recording"]
+                             else f"Record…   ({hotkey_label(current)})")
+            record.remove_css_class("recording")
+            if state["recording"]:
+                record.add_css_class("recording")
+            problem = self._hotkey_problem(current)
+            hotkey_note.remove_css_class("warning")
+            if problem:
+                hotkey_note.add_css_class("warning")
+                hotkey_note.set_label(problem)
+            elif current.startswith("double:"):
+                hotkey_note.set_label("Tap the key twice quickly. Shortcuts like Ctrl+C "
+                                      "never trigger it.")
+            else:
+                hotkey_note.set_label("Set as a GNOME keyboard shortcut.")
+
+        def picked(dd, _p):
+            if state["updating"]:
+                return
+            i = dd.get_selected()
+            if i < len(HOTKEY_PRESETS):
+                state["recording"] = False
+                self._apply_hotkey(HOTKEY_PRESETS[i][0])
+            else:
+                start_recording()
+            refresh()
+        dropdown.connect("notify::selected", picked)
+
+        def start_recording(*_):
+            state["recording"] = True
+            set_gnome_binding("")  # so the current hotkey can't fire while recording
+            refresh()
+        record.connect("clicked", start_recording)
+
+        def on_key(_c, keyval, _code, mods):
+            if not state["recording"]:
+                return False
+            if keyval == Gdk.KEY_Escape:
+                state["recording"] = False
+                self._apply_hotkey(self.settings.get("hotkey", DEFAULT_SETTINGS["hotkey"]))
+                refresh()
+                return True
+            if Gdk.keyval_name(keyval) in ("Control_L", "Control_R", "Shift_L", "Shift_R",
+                                          "Alt_L", "Alt_R", "Super_L", "Super_R",
+                                          "Meta_L", "Meta_R", "ISO_Level3_Shift"):
+                return True  # wait for the non-modifier key
+            mods &= Gtk.accelerator_get_default_mod_mask()
+            accel = Gtk.accelerator_name(Gdk.keyval_to_lower(keyval), mods)
+            state["recording"] = False
+            self._apply_hotkey(accel)
+            refresh()
+            return True
+        keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", on_key)
+        w.add_controller(keys)
+
+        def closed(*_):
+            if state["recording"]:  # closed mid-recording: restore the saved hotkey
+                self._apply_hotkey(self.settings.get("hotkey", DEFAULT_SETTINGS["hotkey"]))
+            return False
+        w.connect("close-request", closed)
+
+        row("Open FindNow with", dropdown)
+        box.append(record)
+        box.append(hotkey_note)
+
+        # appearance
+        section("APPEARANCE")
+        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 1.0, 0.05)
+        scale.set_size_request(200, -1)
+        scale.set_draw_value(False)
+        scale.set_value(float(self.settings.get("opacity", 0.55)))
+
+        def opacity_changed(sc):
+            self.settings["opacity"] = round(sc.get_value(), 2)
+            self._apply_css()
+        scale.connect("value-changed", opacity_changed)
+        scale.connect("notify::has-focus", lambda *_: self._save())
+        w.connect("close-request", lambda *_: (self._save(), False)[1])
+        row("Background opacity", scale)
+
+        # advanced
+        section("ADVANCED")
+        buttons = Gtk.Box(spacing=8, homogeneous=True)
+        json_btn = Gtk.Button(label="Edit shortcuts.json")
+        json_btn.add_css_class("secondary")
+        json_btn.connect("clicked", lambda *_: (w.close(), self._launch({"path": CONFIG_FILE})))
+        index_btn = Gtk.Button(label="Rebuild file index")
+        index_btn.add_css_class("secondary")
+
+        def rebuild(btn):
+            btn.set_label("Rebuilding…")
+            btn.set_sensitive(False)
+            proc = Gio.Subprocess.new(["systemctl", "--user", "start", "findnow-index.service"],
+                                      Gio.SubprocessFlags.STDERR_SILENCE)
+
+            def done(p, res):
+                try:
+                    ok = p.wait_check_finish(res)
+                except GLib.Error:
+                    ok = False
+                btn.set_label("Index rebuilt ✓" if ok else "Rebuild failed")
+                btn.set_sensitive(True)
+            try:
+                proc.wait_check_async(None, done)
+            except GLib.Error:
+                btn.set_label("Rebuild failed")
+                btn.set_sensitive(True)
+        index_btn.connect("clicked", rebuild)
+        buttons.append(json_btn)
+        buttons.append(index_btn)
+        box.append(buttons)
+
+        w.set_child(box)
+        refresh()
+        w.present()
+
+    def _hotkey_problem(self, hotkey):
+        if hotkey.startswith("double:"):
+            reason = DoubleTapListener.check()
+            if reason == "missing-evdev":
+                return ("Double-tap needs python3-evdev. Run:  ./install.sh --double-tap  "
+                        "from the FindNow folder.")
+            if reason == "no-permission":
+                return ("Double-tap needs permission to read the keyboard. Run:  "
+                        "./install.sh --double-tap  from the FindNow folder.")
+            if self.listener and self.listener.error:
+                return f"Double-tap stopped: {self.listener.error}"
+            return None
+        source = Gio.SettingsSchemaSource.get_default()
+        if not source or not source.lookup(GNOME_BINDING_SCHEMA, True):
+            return (f"Not on GNOME: bind {hotkey_label(hotkey)} to {LAUNCHER} in your "
+                    "desktop's keyboard settings.")
+        return None
+
+    def _apply_hotkey(self, hotkey):
+        """Switch between a GNOME shortcut and the double-tap listener."""
+        self.settings["hotkey"] = hotkey
+        self._save()
+        if self.listener:
+            self.listener.stop()
+            self.listener = None
+        if hotkey.startswith("double:"):
+            set_gnome_binding("")
+            modifier = hotkey.split(":", 1)[1]
+            if modifier in DoubleTapListener.MODIFIERS and DoubleTapListener.check() is None:
+                self.listener = DoubleTapListener(
+                    modifier, lambda: (self.activate(), False)[1])
+                self.listener.start()
+        else:
+            set_gnome_binding(hotkey)
+
     # ---- open / hide
     def _launch(self, item):
         self._hide()
@@ -958,13 +1345,14 @@ class FindNow(Gtk.Application):
         if not ctrl and not state & Gdk.ModifierType.ALT_MASK:
             name = Gdk.keyval_name(keyval) or ""
             digit = name[-1] if name.startswith("KP_") else name
-            if len(digit) == 1 and digit.isdigit() and 1 <= int(digit) <= TILE_COUNT:
+            if len(digit) == 1 and digit.isdigit() and 1 <= int(digit) <= min(9, self.tile_count):
                 i = int(digit) - 1
                 item = self.shortcuts[i]
                 if item:
                     self._launch(item)
                 else:
-                    self._add_menu(i, self.grid.get_child_at(i % COLUMNS, i // COLUMNS))
+                    self._add_menu(i, self.grid.get_child_at(i % self.columns,
+                                                             i // self.columns))
                 return True
         return False
 
@@ -988,12 +1376,16 @@ class FindNow(Gtk.Application):
         if self.start_hidden:
             self.start_hidden = False
             return
+        if self.busy:
+            self.window.present()  # a dialog is open: don't hide behind it
+            return
         if self.window.get_visible():
             self._hide()  # pressing the hotkey again closes it
             return
+        hotkey = self.settings.get("hotkey")
         self.shortcuts, self.settings = load_config()
+        self.settings["hotkey"] = hotkey or self.settings.get("hotkey")
         self._apply_css()
-        self.opacity_scale.set_value(float(self.settings.get("opacity", 0.55)))
         self._fill_tiles()
         self.search.set_text("")
         self.body.set_visible_child_name("tiles")
